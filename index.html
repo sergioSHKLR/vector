@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gdrew</title>
+<meta name="description" content="Gdrew is a local-first vector drawing tool: pen paths, node editing, booleans, and type on a path.">
+<meta name="theme-color" content="#14171c">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link id="gdrew-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&amp;family=Oswald:wght@500;600;700&amp;family=Quicksand:wght@500;600;700&amp;display=swap">
+<link rel="stylesheet" href="assets/styles.css">
+<link rel="stylesheet" href="folio/folio.css">
+</head>
+<body>
+<main class="folio-mount" id="gdrew"><p class="folio-boot">GDREW</p></main>
+<script src="folio/geom.js"></script>
+<script src="folio/folio.js"></script>
+<script>
+  (function () {
+    var host = document.getElementById("gdrew");
+    try {
+      host.innerHTML = "";
+      window.Folio.mount(host);
+    } catch (err) {
+      host.textContent = (err && err.message) || "Gdrew failed to load";
+    }
+  })();
+</script>
+</body>
+</html>
