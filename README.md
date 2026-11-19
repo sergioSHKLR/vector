@@ -1,6 +1,6 @@
-# VECTOR
+<p align="center" data-brand-icon><picture><source media="(prefers-color-scheme: dark)" srcset="brand-kit/vector/icons/tile-dark.svg"><img src="brand-kit/vector/icons/tile-light.svg" alt="VECTOR" width="128" height="128"></picture></p>
 
-<img src="brand-kit/vector/icons/tile-light.svg" width="48" height="48" alt="VECTOR">
+# VECTOR
 
 Brand: [brand-kit/](brand-kit/README.md) (SHKLR brand kit, final 19 Nov 2026).
 

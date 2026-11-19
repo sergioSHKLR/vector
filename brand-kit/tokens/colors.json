@@ -19,6 +19,11 @@
        "contrast": 15.67
       },
       {
+       "role": "detail",
+       "hex": "#ffffff",
+       "contrast": 1.21
+      },
+      {
        "role": "centre node ring",
        "hex": "#5a8f43",
        "contrast": 3.2
@@ -37,6 +42,11 @@
        "role": "curve + end nodes",
        "hex": "#f2f2f2",
        "contrast": 17.03
+      },
+      {
+       "role": "detail",
+       "hex": "#ffffff",
+       "contrast": 19.07
       },
       {
        "role": "centre node ring",

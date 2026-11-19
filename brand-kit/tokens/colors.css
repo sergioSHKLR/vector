@@ -7,12 +7,14 @@
   --vector-light-ink: #111111;
   --vector-light-muted: #5c5d5e;
   --vector-light-glyph-1: #111111; /* curve + end nodes · 15.67:1 */
-  --vector-light-glyph-2: #5a8f43; /* centre node ring · 3.2:1 */
+  --vector-light-glyph-2: #ffffff; /* detail · 1.21:1 */
+  --vector-light-glyph-3: #5a8f43; /* centre node ring · 3.2:1 */
   --vector-dark-plate: #0d1014;
   --vector-dark-ink: #f2f2f2;
   --vector-dark-muted: #a2a3a4;
   --vector-dark-glyph-1: #f2f2f2; /* curve + end nodes · 17.03:1 */
-  --vector-dark-glyph-2: #6aa84f; /* centre node ring · 6.65:1 */
+  --vector-dark-glyph-2: #ffffff; /* detail · 19.07:1 */
+  --vector-dark-glyph-3: #6aa84f; /* centre node ring · 6.65:1 */
 }
 /* dual-mode apps: map the active scheme */
 .vector { --app-plate: var(--vector-light-plate); --app-ink: var(--vector-light-ink); --app-muted: var(--vector-light-muted); }

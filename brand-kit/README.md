@@ -6,8 +6,8 @@ From the SHKLR brand kit (final, rev 3, approved 19 Nov 2026). Generated; update
 
 - Tagline: “Local-first vector drawing.”
 - Mode: dual (light + dark plates)
-- Plate light **#e8eaed** — glyph #111111 curve + end nodes 15.67:1, #5a8f43 centre node ring 3.2:1
-- Plate dark **#0d1014** — glyph #f2f2f2 curve + end nodes 17.03:1, #6aa84f centre node ring 6.65:1
+- Plate light **#e8eaed** — glyph #111111 curve + end nodes 15.67:1, #ffffff detail 1.21:1, #5a8f43 centre node ring 3.2:1
+- Plate dark **#0d1014** — glyph #f2f2f2 curve + end nodes 17.03:1, #ffffff detail 19.07:1, #6aa84f centre node ring 6.65:1
 
 Files in `vector/`:
 - `icons/` master SVGs (glyph, tile, square, maskable, mono); `icons/flat/` flat copies for simple SVG tools (no groups, transforms, clips or arcs).
