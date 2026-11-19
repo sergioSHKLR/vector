@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gdrew</title>
-<meta name="description" content="Gdrew is a local-first vector drawing tool: pen paths, node editing, booleans, and type on a path.">
+<title>VECTOR</title>
+<meta name="description" content="VECTOR is a local-first vector drawing tool: pen paths, node editing, booleans, and type on a path.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#e8eaed" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d1014" media="(prefers-color-scheme: dark)">
@@ -27,22 +27,22 @@
 <meta name="twitter:image" content="https://sergioshklr.github.io/gdrew/x-card.png">
 <link rel="preload" href="fonts/SHKLRMonoNarrow[wght].woff2" as="font" type="font/woff2" crossorigin>
 <!-- Oswald / Nunito are drawing typefaces offered in the editor (content), not UI fonts. -->
-<link id="gdrew-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&amp;family=Oswald:wght@500;600;700&amp;display=swap">
+<link id="vector-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&amp;family=Oswald:wght@500;600;700&amp;display=swap">
 <link rel="stylesheet" href="assets/styles.css">
 <link rel="stylesheet" href="folio/folio.css">
 </head>
 <body>
-<main class="folio-mount" id="gdrew"><p class="folio-boot">GDREW</p></main>
+<main class="folio-mount" id="vector"><p class="folio-boot">VECTOR</p></main>
 <script src="folio/geom.js"></script>
 <script src="folio/folio.js"></script>
 <script>
   (function () {
-    var host = document.getElementById("gdrew");
+    var host = document.getElementById("vector");
     try {
       host.innerHTML = "";
       window.Folio.mount(host);
     } catch (err) {
-      host.textContent = (err && err.message) || "Gdrew failed to load";
+      host.textContent = (err && err.message) || "VECTOR failed to load";
     }
   })();
 </script>

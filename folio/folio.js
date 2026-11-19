@@ -1,4 +1,4 @@
-/* Gdrew — local-first SVG drawing. No dependencies. */
+/* VECTOR (formerly Gdrew) — local-first SVG drawing. No dependencies. */
 (function (root) {
   "use strict";
 
@@ -21,9 +21,9 @@
   }
 
   function ensureFonts() {
-    if (typeof document === "undefined" || document.getElementById("gdrew-fonts")) return;
+    if (typeof document === "undefined" || document.getElementById("vector-fonts")) return;
     const link = document.createElement("link");
-    link.id = "gdrew-fonts";
+    link.id = "vector-fonts";
     link.rel = "stylesheet";
     link.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&family=Oswald:wght@500;600;700&display=swap";
     document.head.appendChild(link);
@@ -770,7 +770,7 @@
 
   function starter() {
     const d = blank();
-    d.name = "Gdrew";
+    d.name = "VECTOR";
     d.nextId = 6;
     d.shapes = [
       {
@@ -779,7 +779,7 @@
         x: 64,
         y: 108,
         rotation: 0,
-        text: "Gdrew",
+        text: "VECTOR",
         font: REGULAR,
         fontWeight: 400,
         size: 76,
@@ -1146,10 +1146,10 @@
         const raw = localStorage.getItem(KEY);
         if (!raw) return starter();
         const doc = normalize(JSON.parse(raw));
-        if (doc.name === "Folio") doc.name = "Gdrew";
+        if (doc.name === "Folio") doc.name = "VECTOR";
         for (const shape of doc.shapes) {
           if (shape.type === "text" && shape.id === "s1" && shape.text === "Folio" && shape.size === 72) {
-            shape.text = "Gdrew";
+            shape.text = "VECTOR";
           }
         }
         if (doc.width === 960 && doc.height === 640 && doc.background === "#f3efe6") {
@@ -1171,7 +1171,7 @@
       return `
         <header class="chrome">
           <div class="menubar">
-            <div class="brand"><span class="glyph">${ICONS.mark}</span><span class="name"><span class="mark">GDREW</span></span></div>
+            <div class="brand"><span class="glyph">${ICONS.mark}</span><span class="name"><span class="mark">VECTOR</span></span></div>
             <nav class="menus">
               <div class="menu">
                 <button type="button" class="menu-btn" aria-expanded="false" aria-controls="menu-file">File</button>
@@ -1279,7 +1279,7 @@
                 </div>
               </div>
             </nav>
-            <span class="version" title="Gdrew ${VERSION}">v${VERSION}</span>
+            <span class="version" title="VECTOR ${VERSION}">v${VERSION}</span>
           </div>
           <div class="toolbar">
             <div class="cluster">
@@ -3863,7 +3863,7 @@
 
     async function saveSVG() {
       const text = exportSVG();
-      const filename = (doc.name || "gdrew") + ".svg";
+      const filename = (doc.name || "vector") + ".svg";
       try {
         if (!root.showSaveFilePicker) throw new Error("no-fs");
         if (!svgHandle) {
@@ -3882,13 +3882,13 @@
 
     async function saveJSON() {
       const text = JSON.stringify(doc, null, 2);
-      const filename = (doc.name || "gdrew") + ".json";
+      const filename = (doc.name || "vector") + ".json";
       try {
         if (!root.showSaveFilePicker) throw new Error("no-fs");
         if (!jsonHandle) {
           jsonHandle = await root.showSaveFilePicker({
             suggestedName: filename,
-            types: [{ description: "Gdrew project", accept: { "application/json": [".json"] } }],
+            types: [{ description: "VECTOR project", accept: { "application/json": [".json"] } }],
           });
         }
         await writeHandle(jsonHandle, text, filename, "application/json");
@@ -4223,7 +4223,7 @@
           const [handle] = await root.showOpenFilePicker({
             multiple: false,
             types: [{
-              description: "Gdrew drawing",
+              description: "VECTOR drawing",
               accept: { "image/svg+xml": [".svg"], "application/json": [".json"] },
             }],
           });

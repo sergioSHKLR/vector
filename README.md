@@ -1,6 +1,6 @@
-# Gdrew
+# VECTOR
 
-Gdrew is a local-first vector drawing tool: pen paths, node editing, booleans, and type on a path.
+VECTOR (formerly Gdrew) is a local-first vector drawing tool: pen paths, node editing, booleans, and type on a path.
 
 **Live:** https://sergioshklr.github.io/gdrew/
 
