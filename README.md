@@ -2,7 +2,7 @@
 
 VECTOR (formerly Gdrew) is a local-first vector drawing tool: pen paths, node editing, booleans, and type on a path.
 
-**Live:** https://sergioshklr.github.io/gdrew/
+**Live:** https://sergioshklr.github.io/vector/ (the old `/gdrew/` URL redirects here)
 
 Recovered from `gdrew.grok.me` (v1.15) on Nov 17, 2026, after the grok.me dashboard that owned the app disappeared.
 
