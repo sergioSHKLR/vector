@@ -1,8 +1,12 @@
 # VECTOR
 
+<img src="brand-kit/vector/icons/tile-light.svg" width="48" height="48" alt="VECTOR">
+
+Brand: [brand-kit/](brand-kit/README.md) (SHKLR brand kit, final 19 Nov 2026).
+
 VECTOR (formerly Gdrew) is a local-first vector drawing tool: pen paths, node editing, booleans, and type on a path.
 
-**Live:** https://sergioshklr.github.io/vector/ (the old `/gdrew/` URL redirects here)
+**Live:** https://sergioshklr.github.io/vector/
 
 Recovered from `gdrew.grok.me` (v1.15) on Nov 17, 2026, after the grok.me dashboard that owned the app disappeared.
 
