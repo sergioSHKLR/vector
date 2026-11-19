@@ -25,7 +25,7 @@
     const link = document.createElement("link");
     link.id = "gdrew-fonts";
     link.rel = "stylesheet";
-    link.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&family=Oswald:wght@500;600;700&family=Quicksand:wght@500;600;700&display=swap";
+    link.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&family=Oswald:wght@500;600;700&display=swap";
     document.head.appendChild(link);
   }
 
@@ -1907,7 +1907,7 @@
       const mark = "#0f8b7d";
       const x = fitRulerCanvas(xCanvas);
       const y = fitRulerCanvas(yCanvas);
-      const font = "600 10px Quicksand, sans-serif";
+      const font = "600 10px 'SHKLR Mono Narrow', ui-monospace, monospace";
       x.ctx.font = font;
       y.ctx.font = font;
       const divs = unit === "decimal" || unit === "fraction" ? 16 : 10;

@@ -1,6 +1,7 @@
 @charset "utf-8";
+@font-face { font-family: "SHKLR Mono Narrow"; src: url("../fonts/SHKLRMonoNarrow[wght].woff2") format("woff2"); font-weight: 200 800; font-display: swap; }
 
-:root { --ink: #e6e6e6; --ink-2: #eeeeee; --ink-3: #f7f7f7; --line: #c6c6c6; --paper: #f3efe6; --brass: #0f8b7d; --steel: #3d8bfd; --fg: #1a1a1a; --muted: rgba(26, 26, 26, 0.62); --desk: #e8eaed; --hover: #dedede; --pressed: #d2d2d2; --shadow: 0 8px 20px rgba(0, 0, 0, 0.12); --ruler-tick: rgba(26, 26, 26, 0.28); --ruler-num: rgba(26, 26, 26, 0.4); --sans: Quicksand, "Avenir Next", "Segoe UI", sans-serif; color: var(--fg); font-family: var(--sans); font-size: 14px; line-height: 1.45; }
+:root { --ink: #e6e6e6; --ink-2: #eeeeee; --ink-3: #f7f7f7; --line: #c6c6c6; --paper: #f3efe6; --brass: #0f8b7d; --steel: #3d8bfd; --fg: #1a1a1a; --muted: rgba(26, 26, 26, 0.62); --desk: #e8eaed; --hover: #dedede; --pressed: #d2d2d2; --shadow: 0 8px 20px rgba(0, 0, 0, 0.12); --ruler-tick: rgba(26, 26, 26, 0.28); --ruler-num: rgba(26, 26, 26, 0.4); --sans: "SHKLR Mono Narrow", "Monaspace Neon", ui-monospace, monospace; color: var(--fg); font-family: var(--sans); font-size: 14px; line-height: 1.45; }
 
 .folio.theme-dark { --ink: #14171c; --ink-2: #1b2028; --ink-3: #262c36; --line: #343b46; --fg: #f3efe6; --muted: rgba(243, 239, 230, 0.62); --desk: #0d1014; --hover: #303743; --pressed: #16332f; --shadow: 0 10px 28px rgba(0, 0, 0, 0.28); --ruler-tick: rgba(243, 239, 230, 0.28); --ruler-num: rgba(243, 239, 230, 0.42); }
 
@@ -106,7 +107,7 @@
 
 .brand .name { display: flex; flex-direction: column; justify-content: center; }
 
-.brand .mark { font-family: Quicksand, "Avenir Next", "Segoe UI", sans-serif; font-weight: 700; color: rgb(15, 139, 125); font-size: 20px; line-height: 1; letter-spacing: 0.14em; }
+.brand .mark { font-family: "SHKLR Mono Narrow", "Monaspace Neon", ui-monospace, monospace; font-weight: 700; color: rgb(15, 139, 125); font-size: 20px; line-height: 1; letter-spacing: 0.14em; }
 
 .brand .sub { color: var(--muted); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; }
 
