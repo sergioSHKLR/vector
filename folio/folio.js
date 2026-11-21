@@ -3,7 +3,7 @@
   "use strict";
 
   const KEY = "folio.v1";
-  const VERSION = "1.15";
+  const VERSION = "1.20";
   const NARROW = "Oswald, Impact, 'Arial Narrow', sans-serif";
   const REGULAR = "Arial, Helvetica, sans-serif";
   const WIDE = "Nunito, Verdana, sans-serif";
@@ -21,11 +21,11 @@
   }
 
   function ensureFonts() {
-    if (typeof document === "undefined" || document.getElementById("vector-fonts")) return;
+    if (typeof document === "undefined" || document.getElementById("gdrew-fonts")) return;
     const link = document.createElement("link");
-    link.id = "vector-fonts";
+    link.id = "gdrew-fonts";
     link.rel = "stylesheet";
-    link.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&family=Oswald:wght@500;600;700&display=swap";
+    link.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&family=Oswald:wght@500;600;700&family=Quicksand:wght@500;600;700&display=swap";
     document.head.appendChild(link);
   }
 
@@ -1055,7 +1055,9 @@
     let tool = "select";
     let shapeKind = "roundrect";
     let selected = [];
+    let editingGroup = null;
     let nodeSel = null;
+    let shapeClip = null;
     let undo = [];
     let redo = [];
     let pen = null;
@@ -1510,6 +1512,16 @@
                 <label class="field"><span>Tolerance <b id="img-tol-val">18</b></span><input id="img-tol" type="range" min="0" max="90" value="18" /></label>
                 <div class="field wide"><button type="button" id="btn-pick-key">Pick color on image</button></div>
                 <div class="field wide"><button type="button" id="btn-knock">Make transparent</button></div>
+                <label class="field"><span>Colors <b id="trace-colors-val">8</b></span><input id="trace-colors" type="range" min="2" max="12" value="8" /></label>
+                <label class="field"><span>Detail <b id="trace-detail-val">4</b></span><input id="trace-detail" type="range" min="1" max="8" value="4" /></label>
+                <label class="field"><span>Curves</span>
+                  <select id="trace-smooth"><option value="1" selected>Smooth</option><option value="0">Corners</option></select>
+                </label>
+                <label class="field"><span>Paper</span>
+                  <select id="trace-paper"><option value="1" selected>Skip white</option><option value="0">Keep white</option></select>
+                </label>
+                <div class="field wide"><button type="button" id="btn-trace">Trace to vectors</button></div>
+                <p class="hint wide">Trace builds filled paths on top of the picture. Raise Detail for small shapes. Skip white leaves a white page out of the result.</p>
               </div>
             </div>
           </aside>
@@ -1524,8 +1536,67 @@
         <input id="file-png" type="file" accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" hidden />`;
     }
 
+    function locate(id, list, chain) {
+      const shapes = list || doc.shapes;
+      const ancestors = chain || [];
+      for (const s of shapes) {
+        if (s.id === id) return { shape: s, ancestors: ancestors };
+        if (s.type === "group") {
+          const hit = locate(id, s.children || [], ancestors.concat(s));
+          if (hit) return hit;
+        }
+      }
+      return null;
+    }
+
     function byId(id) {
-      return doc.shapes.find((s) => s.id === id) || null;
+      const hit = locate(id);
+      return hit ? hit.shape : null;
+    }
+
+    function chainOf(id) {
+      const hit = locate(id);
+      return hit ? hit.ancestors : [];
+    }
+
+    function toPage(s, p) {
+      let q = localToWorld(s, p);
+      const ancestors = chainOf(s.id);
+      for (let i = ancestors.length - 1; i >= 0; i--) q = localToWorld(ancestors[i], q);
+      return q;
+    }
+
+    function fromPage(s, p) {
+      let q = p;
+      for (const ancestor of chainOf(s.id)) q = worldToLocal(ancestor, q);
+      return worldToLocal(s, q);
+    }
+
+    function parentDelta(s, dx, dy) {
+      const ancestors = chainOf(s.id);
+      if (!ancestors.length) return { x: dx, y: dy };
+      let origin = { x: 0, y: 0 };
+      for (let i = ancestors.length - 1; i >= 0; i--) origin = localToWorld(ancestors[i], origin);
+      let back = { x: origin.x + dx, y: origin.y + dy };
+      for (const ancestor of ancestors) back = worldToLocal(ancestor, back);
+      return back;
+    }
+
+    function containerOf(id) {
+      const hit = locate(id);
+      if (!hit) return null;
+      if (!hit.ancestors.length) return doc.shapes;
+      return hit.ancestors[hit.ancestors.length - 1].children;
+    }
+
+    function pageBox(s) {
+      const b = localBBox(s);
+      return bounds([
+        toPage(s, { x: b.minX, y: b.minY }),
+        toPage(s, { x: b.maxX, y: b.minY }),
+        toPage(s, { x: b.maxX, y: b.maxY }),
+        toPage(s, { x: b.minX, y: b.maxY }),
+      ]);
     }
 
     function allocId() {
@@ -1646,10 +1717,11 @@
     }
 
     function shapeMarkup(s, nested) {
+      const opened = !exporting && editingGroup === s.id;
       if (s.type === "group") {
         const xf = shapeTransform(s);
-        const kids = (s.children || []).map((child) => shapeMarkup(child, true)).join("");
-        const attr = nested ? "" : ` data-shape="${s.id}"`;
+        const kids = (s.children || []).map((child) => shapeMarkup(child, opened ? false : true)).join("");
+        const attr = nested && !opened ? "" : ` data-shape="${s.id}"`;
         return `<g${attr} transform="${xf}" opacity="${n(s.opacity == null ? 1 : s.opacity)}">${kids}</g>`;
       }
       const xf = shapeTransform(s);
@@ -1695,6 +1767,29 @@
       return `<circle ${attrs} cx="${n(p.x)}" cy="${n(p.y)}" r="${n(r)}" />`;
     }
 
+    function groupBadge(s, open) {
+      const b = localBBox(s);
+      const p = toPage(s, { x: b.maxX + 20 / zoom, y: b.minY - 20 / zoom });
+      const size = 16 / zoom;
+      const fill = open ? "#0f8b7d" : "#f3efe6";
+      const ink = open ? "#f3efe6" : "#0f8b7d";
+      return `<g data-handle="group" data-shape="${s.id}" style="cursor:pointer">` +
+        `<rect x="${n(p.x - size / 2)}" y="${n(p.y - size / 2)}" width="${n(size)}" height="${n(size)}" rx="${n(3 / zoom)}" fill="${fill}" stroke="#0f8b7d" stroke-width="${n(1.4 / zoom)}"/>` +
+        `<text x="${n(p.x)}" y="${n(p.y)}" text-anchor="middle" dominant-baseline="central" font-family="Quicksand, sans-serif" font-size="${n(11 / zoom)}" font-weight="700" fill="${ink}" pointer-events="none">G</text></g>`;
+    }
+
+    function groupFrame(s) {
+      const b = localBBox(s);
+      const corners = [
+        [b.minX, b.minY],
+        [b.maxX, b.minY],
+        [b.maxX, b.maxY],
+        [b.minX, b.maxY],
+      ].map(([x, y]) => toPage(s, { x: x, y: y }));
+      return `<path d="M ${corners.map((p) => n(p.x) + " " + n(p.y)).join(" L ")} Z" fill="none" stroke="#0f8b7d" stroke-width="1.25" stroke-dasharray="${n(7 / zoom)} ${n(4 / zoom)}" vector-effect="non-scaling-stroke" pointer-events="none"/>` +
+        groupBadge(s, true);
+    }
+
     function selectionChrome(s) {
       if (s.type === "textPath") return "";
       const b = localBBox(s);
@@ -1703,16 +1798,17 @@
         [b.maxX, b.minY],
         [b.maxX, b.maxY],
         [b.minX, b.maxY],
-      ].map(([x, y]) => localToWorld(s, { x: x, y: y }));
-      let html = `<path d="M ${corners.map((p) => n(p.x) + " " + n(p.y)).join(" L ")} Z" fill="none" stroke="#3d8bfd" stroke-width="1.25" vector-effect="non-scaling-stroke" pointer-events="none"/>`;
+      ].map(([x, y]) => toPage(s, { x: x, y: y }));
+      const dash = s.type === "group" ? ` stroke-dasharray="${n(8 / zoom)} ${n(5 / zoom)}"` : "";
+      let html = `<path d="M ${corners.map((p) => n(p.x) + " " + n(p.y)).join(" L ")} Z" fill="none" stroke="#3d8bfd" stroke-width="1.25"${dash} vector-effect="non-scaling-stroke" pointer-events="none"/>`;
       if (s.type !== "text") {
         for (const name of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
-          const w = localToWorld(s, handlePoint(b, name));
+          const w = toPage(s, handlePoint(b, name));
           html += circleAt(w, `data-handle="${name}" data-shape="${s.id}" fill="#f3efe6" stroke="#3d8bfd" stroke-width="${n(1.25 / zoom)}"`, 5 / zoom);
         }
       }
-      const top = localToWorld(s, { x: (b.minX + b.maxX) / 2, y: b.minY });
-      const c = localToWorld(s, localCenter(s));
+      const top = toPage(s, { x: (b.minX + b.maxX) / 2, y: b.minY });
+      const c = toPage(s, localCenter(s));
       let dx = top.x - c.x;
       let dy = top.y - c.y;
       const len = Math.hypot(dx, dy) || 1;
@@ -1722,12 +1818,13 @@
       html += `<line x1="${n(top.x)}" y1="${n(top.y)}" x2="${n(rot.x)}" y2="${n(rot.y)}" stroke="#3d8bfd" stroke-width="${n(1 / zoom)}" pointer-events="none"/>`;
       html += circleAt(rot, `data-handle="rotate" data-shape="${s.id}" fill="#0f8b7d" stroke="#14171c" stroke-width="${n(1 / zoom)}"`, 6 / zoom);
       const off = 22 / zoom;
-      const c0 = localToWorld(s, { x: b.minX - off, y: b.minY - off });
+      const c0 = toPage(s, { x: b.minX - off, y: b.minY - off });
       const grip = 7 / zoom;
       html += `<g data-handle="move" data-shape="${s.id}" style="cursor:grab">`;
       html += `<rect x="${n(c0.x - grip)}" y="${n(c0.y - grip)}" width="${n(grip * 2)}" height="${n(grip * 2)}" rx="${n(2 / zoom)}" fill="#f3efe6" stroke="#14171c" stroke-width="${n(1.25 / zoom)}"/>`;
       html += `<path d="M ${n(c0.x - grip * 0.55)} ${n(c0.y)} H ${n(c0.x + grip * 0.55)} M ${n(c0.x)} ${n(c0.y - grip * 0.55)} V ${n(c0.y + grip * 0.55)}" fill="none" stroke="#14171c" stroke-width="${n(1.2 / zoom)}" pointer-events="none"/>`;
       html += `</g>`;
+      if (s.type === "group") html += groupBadge(s, editingGroup === s.id);
       return html;
     }
 
@@ -1735,15 +1832,15 @@
       let html = "";
       (s.rings || []).forEach((ring, ri) => {
         ring.forEach((a, ai) => {
-          const p = localToWorld(s, a);
+          const p = toPage(s, a);
           const active = nodeSel && nodeSel.shapeId === s.id && nodeSel.ring === ri && nodeSel.index === ai;
           if (Math.hypot(a.inX, a.inY) > 0.35) {
-            const inn = localToWorld(s, { x: a.x + a.inX, y: a.y + a.inY });
+            const inn = toPage(s, { x: a.x + a.inX, y: a.y + a.inY });
             html += `<line x1="${n(p.x)}" y1="${n(p.y)}" x2="${n(inn.x)}" y2="${n(inn.y)}" stroke="#0f8b7d" stroke-width="${n(1 / zoom)}" pointer-events="none"/>`;
             html += circleAt(inn, `data-kind="in" data-shape="${s.id}" data-ring="${ri}" data-index="${ai}" fill="#0f8b7d" stroke="#14171c" stroke-width="${n(1 / zoom)}"`, 4.5 / zoom);
           }
           if (Math.hypot(a.outX, a.outY) > 0.35) {
-            const out = localToWorld(s, { x: a.x + a.outX, y: a.y + a.outY });
+            const out = toPage(s, { x: a.x + a.outX, y: a.y + a.outY });
             html += `<line x1="${n(p.x)}" y1="${n(p.y)}" x2="${n(out.x)}" y2="${n(out.y)}" stroke="#0f8b7d" stroke-width="${n(1 / zoom)}" pointer-events="none"/>`;
             html += circleAt(out, `data-kind="out" data-shape="${s.id}" data-shape-kind="1" data-ring="${ri}" data-index="${ai}" fill="#f3efe6" stroke="#0f8b7d" stroke-width="${n(1 / zoom)}"`, 4.5 / zoom);
           }
@@ -1784,6 +1881,11 @@
       }
       html += penOverlay();
       if (tool === "select") {
+        if (editingGroup) {
+          const g = byId(editingGroup);
+          if (!g || g.type !== "group") editingGroup = null;
+          else if (!selected.includes(g.id)) html += groupFrame(g);
+        }
         for (const id of selected) {
           const s = byId(id);
           if (s) html += selectionChrome(s);
@@ -1907,7 +2009,7 @@
       const mark = "#0f8b7d";
       const x = fitRulerCanvas(xCanvas);
       const y = fitRulerCanvas(yCanvas);
-      const font = "600 10px 'SHKLR Mono Narrow', ui-monospace, monospace";
+      const font = "600 10px Quicksand, sans-serif";
       x.ctx.font = font;
       y.ctx.font = font;
       const divs = unit === "decimal" || unit === "fraction" ? 16 : 10;
@@ -2152,7 +2254,7 @@
       if (s.type === "path" && nodeSel && nodeSel.shapeId === s.id) {
         const a = s.rings[nodeSel.ring] && s.rings[nodeSel.ring][nodeSel.index];
         if (a) {
-          const w = localToWorld(s, a);
+          const w = toPage(s, a);
           setLen("node-x", w.x);
           setLen("node-y", w.y);
           const pre = $("path-d");
@@ -2599,7 +2701,7 @@
     }
 
     function scaleBox(live, before, handle, world, shift) {
-      const lp = worldToLocal(before, world);
+      const lp = fromPage(before, world);
       let minX = 0;
       let minY = 0;
       let maxX = before.w;
@@ -2651,7 +2753,7 @@
       const b = localBBox(before);
       const fix = handlePoint(b, opposite(handle));
       const mov = handlePoint(b, handle);
-      const lp = worldToLocal(before, world);
+      const lp = fromPage(before, world);
       let sx = 1;
       let sy = 1;
       const ax = /e|w/.test(handle);
@@ -2819,12 +2921,26 @@
         if (s.type === "group") for (const child of s.children || []) pathIds(child, into);
       }
       const paths = new Set();
-      for (const s of doc.shapes) {
-        if (!drop.has(s.id)) continue;
-        pathIds(s, paths);
+      function collect(list) {
+        for (const s of list) {
+          if (drop.has(s.id)) pathIds(s, paths);
+          else if (s.type === "group") collect(s.children || []);
+        }
       }
+      collect(doc.shapes);
+      function strip(list) {
+        for (let i = list.length - 1; i >= 0; i--) {
+          const s = list[i];
+          if (s.type !== "group" || !s.children) continue;
+          strip(s.children);
+          s.children = s.children.filter((c) => !drop.has(c.id));
+          if (!s.children.length) drop.add(s.id);
+        }
+      }
+      strip(doc.shapes);
       for (const t of doc.shapes) if (t.type === "textPath" && paths.has(t.pathId)) drop.add(t.id);
       doc.shapes = doc.shapes.filter((s) => !drop.has(s.id));
+      if (editingGroup && drop.has(editingGroup)) editingGroup = null;
       selected = selected.filter((id) => !drop.has(id));
       nodeSel = null;
     }
@@ -2960,7 +3076,10 @@
         copies.push(cloneShape(s, true));
       }
       for (const c of copies) if (c.type === "textPath" && map[c.pathId]) c.pathId = map[c.pathId];
-      doc.shapes.push(...copies);
+      const homes = selected.map(containerOf);
+      const home = homes[0];
+      if (home && homes.every((list) => list === home)) home.push(...copies);
+      else doc.shapes.push(...copies);
       selected = copies.map((c) => c.id);
       pushHist(before);
       paint();
@@ -2978,7 +3097,13 @@
 
     function groupSelected() {
       const ids = new Set(selected);
-      const members = doc.shapes.filter((s) => ids.has(s.id) && s.type !== "textPath");
+      const homes = selected.map(containerOf);
+      const home = homes[0];
+      if (!home || homes.some((list) => list !== home)) {
+        setStatus("Select two or more shapes");
+        return;
+      }
+      const members = home.filter((s) => ids.has(s.id) && s.type !== "textPath");
       if (members.length < 2) {
         setStatus("Select two or more shapes");
         return;
@@ -2996,10 +3121,15 @@
         strokeWidth: 0,
         children: members.map((s) => structuredClone(s)),
       };
-      const index = doc.shapes.findIndex((s) => ids.has(s.id) && s.type !== "textPath");
+      const index = home.findIndex((s) => ids.has(s.id) && s.type !== "textPath");
       const keep = new Set(members.map((s) => s.id));
-      doc.shapes = doc.shapes.filter((s) => !keep.has(s.id));
-      doc.shapes.splice(Math.max(0, index), 0, group);
+      const next = home.filter((s) => !keep.has(s.id));
+      next.splice(Math.max(0, index), 0, group);
+      if (home === doc.shapes) doc.shapes = next;
+      else {
+        const parent = chainOf(members[0].id).slice(-1)[0];
+        if (parent) parent.children = next;
+      }
       selected = [group.id];
       pushHist(before);
       paint();
@@ -3016,14 +3146,18 @@
       const before = JSON.stringify(doc);
       const next = [];
       for (const group of groups) {
-        const index = doc.shapes.findIndex((s) => s.id === group.id);
+        const home = containerOf(group.id) || doc.shapes;
+        const index = home.findIndex((s) => s.id === group.id);
         if (index < 0) continue;
+        const loc = locate(group.id);
+        const parent = loc && loc.ancestors.length ? loc.ancestors[loc.ancestors.length - 1] : null;
         const kids = (group.children || []).map((child) => {
           const copy = structuredClone(child);
           releaseChild(group, copy);
           return copy;
         });
-        doc.shapes.splice(index, 1, ...kids);
+        home.splice(index, 1, ...kids);
+        if (editingGroup === group.id) editingGroup = parent && parent.type === "group" ? parent.id : null;
         next.push(...kids.map((k) => k.id));
       }
       selected = next;
@@ -3035,33 +3169,87 @@
 
     function reorder(dir) {
       if (!selected.length) return;
+      const homes = selected.map(containerOf);
+      const home = homes[0];
+      const list = home && homes.every((item) => item === home) ? home : doc.shapes;
       const before = JSON.stringify(doc);
-      const ids = new Set(selected);
+      const ids = new Set(selected.filter((id) => list.some((s) => s.id === id)));
+      if (!ids.size) return;
+      let next = list;
       if (dir === "front" || dir === "back") {
-        const move = doc.shapes.filter((s) => ids.has(s.id));
-        const keep = doc.shapes.filter((s) => !ids.has(s.id));
-        doc.shapes = dir === "front" ? keep.concat(move) : move.concat(keep);
+        const move = list.filter((s) => ids.has(s.id));
+        const keep = list.filter((s) => !ids.has(s.id));
+        next = dir === "front" ? keep.concat(move) : move.concat(keep);
       } else if (dir === "forward") {
-        for (let i = doc.shapes.length - 2; i >= 0; i--) {
-          if (ids.has(doc.shapes[i].id) && !ids.has(doc.shapes[i + 1].id)) {
-            const t = doc.shapes[i];
-            doc.shapes[i] = doc.shapes[i + 1];
-            doc.shapes[i + 1] = t;
+        next = list.slice();
+        for (let i = next.length - 2; i >= 0; i--) {
+          if (ids.has(next[i].id) && !ids.has(next[i + 1].id)) {
+            const t = next[i];
+            next[i] = next[i + 1];
+            next[i + 1] = t;
           }
         }
       } else {
-        for (let i = 1; i < doc.shapes.length; i++) {
-          if (ids.has(doc.shapes[i].id) && !ids.has(doc.shapes[i - 1].id)) {
-            const t = doc.shapes[i];
-            doc.shapes[i] = doc.shapes[i - 1];
-            doc.shapes[i - 1] = t;
+        next = list.slice();
+        for (let i = 1; i < next.length; i++) {
+          if (ids.has(next[i].id) && !ids.has(next[i - 1].id)) {
+            const t = next[i];
+            next[i] = next[i - 1];
+            next[i - 1] = t;
           }
         }
+      }
+      if (list === doc.shapes) doc.shapes = next;
+      else {
+        const owner = chainOf([...ids][0]);
+        const parent = owner[owner.length - 1];
+        if (parent) parent.children = next;
       }
       if (JSON.stringify(doc) !== before) {
         pushHist(before);
         paint();
+        const labels = { front: "Brought to front", forward: "Brought forward", backward: "Sent backward", back: "Sent to back" };
+        setStatus(labels[dir] || "Reordered");
       }
+    }
+
+    function copySelected() {
+      const shapes = selected.map(byId).filter(Boolean).map((s) => structuredClone(s));
+      if (!shapes.length) return null;
+      shapeClip = { shapes: shapes, gen: 0, key: shapes.map((s) => s.id).join(",") };
+      return shapes;
+    }
+
+    function pasteShapes(shapes) {
+      if (!shapes || !shapes.length) return;
+      const key = shapes.map((s) => s.id).join(",");
+      if (!shapeClip || shapeClip.key !== key) shapeClip = { shapes: shapes, gen: 0, key: key };
+      shapeClip.gen += 1;
+      const shift = 16 * shapeClip.gen;
+      const before = JSON.stringify(doc);
+      const map = {};
+      function cloneShape(s, dx) {
+        const c = structuredClone(s);
+        map[s.id] = allocId();
+        c.id = map[s.id];
+        if (dx) {
+          if (typeof c.x === "number") c.x += dx;
+          if (typeof c.y === "number") c.y += dx;
+        }
+        if (c.type === "group") c.children = (s.children || []).map((child) => cloneShape(child, 0));
+        return c;
+      }
+      const copies = shapes.map((s) => cloneShape(s, shift));
+      for (const c of copies) if (c.type === "textPath" && map[c.pathId]) c.pathId = map[c.pathId];
+      const live = copies.filter((c) => c.type !== "textPath" || map[c.pathId] || byId(c.pathId));
+      const home = editingGroup && byId(editingGroup) && byId(editingGroup).type === "group" ? byId(editingGroup).children : doc.shapes;
+      home.push(...live);
+      selected = live.map((c) => c.id);
+      nodeSel = null;
+      pushHist(before);
+      paint();
+      syncInspector();
+      setStatus("Pasted");
     }
 
     function nudge(dx, dy) {
@@ -3070,8 +3258,8 @@
         const s = byId(nodeSel.shapeId);
         const a = s && s.rings[nodeSel.ring] && s.rings[nodeSel.ring][nodeSel.index];
         if (!a) return;
-        const w = localToWorld(s, a);
-        const l = worldToLocal(s, { x: w.x + dx, y: w.y + dy });
+        const w = toPage(s, a);
+        const l = fromPage(s, { x: w.x + dx, y: w.y + dy });
         a.x = l.x;
         a.y = l.y;
       } else {
@@ -3079,8 +3267,9 @@
         for (const id of selected) {
           const s = byId(id);
           if (!s || s.type === "textPath") continue;
-          s.x += dx;
-          s.y += dy;
+          const d = parentDelta(s, dx, dy);
+          s.x += d.x;
+          s.y += d.y;
         }
       }
       pushHist(before);
@@ -3126,6 +3315,7 @@
       const before = JSON.stringify(doc);
       doc = blank();
       selected = [];
+      editingGroup = null;
       nodeSel = null;
       svgHandle = null;
       jsonHandle = null;
@@ -3166,7 +3356,7 @@
           if (Math.hypot(a.inX, a.inY) > 0.35) cands.push(["in", a.x + a.inX, a.y + a.inY]);
           if (Math.hypot(a.outX, a.outY) > 0.35) cands.push(["out", a.x + a.outX, a.y + a.outY]);
           for (const [kind, x, y] of cands) {
-            const w = localToWorld(s, { x: x, y: y });
+            const w = toPage(s, { x: x, y: y });
             const d = Math.hypot(w.x - world.x, w.y - world.y);
             if (d < bestD) {
               bestD = d;
@@ -3183,10 +3373,12 @@
       const maxX = Math.max(x0, x1);
       const minY = Math.min(y0, y1);
       const maxY = Math.max(y0, y1);
-      return doc.shapes
+      const pool = editingGroup && byId(editingGroup) && byId(editingGroup).type === "group" ? byId(editingGroup).children || [] : doc.shapes;
+      const boxOf = editingGroup ? pageBox : worldBox;
+      return pool
         .filter((s) => {
           if (s.type === "textPath") return false;
-          const b = worldBox(s);
+          const b = boxOf(s);
           return !(b.maxX < minX || b.minX > maxX || b.maxY < minY || b.minY > maxY);
         })
         .map((s) => s.id);
@@ -3863,7 +4055,7 @@
 
     async function saveSVG() {
       const text = exportSVG();
-      const filename = (doc.name || "vector") + ".svg";
+      const filename = (doc.name || "gdrew") + ".svg";
       try {
         if (!root.showSaveFilePicker) throw new Error("no-fs");
         if (!svgHandle) {
@@ -3882,7 +4074,7 @@
 
     async function saveJSON() {
       const text = JSON.stringify(doc, null, 2);
-      const filename = (doc.name || "vector") + ".json";
+      const filename = (doc.name || "gdrew") + ".json";
       try {
         if (!root.showSaveFilePicker) throw new Error("no-fs");
         if (!jsonHandle) {
@@ -3899,25 +4091,246 @@
       }
     }
 
-    function paintOf(el, name, fallback) {
+    function specifiedPaint(el, name) {
       const style = el.getAttribute("style") || "";
-      const found = style.match(new RegExp(name + "\\s*:\\s*([^;]+)"));
-      return ((found && found[1]) || el.getAttribute(name) || fallback || "").trim();
+      const found = style.match(new RegExp("(?:^|;)\\s*" + name + "\\s*:\\s*([^;]+)"));
+      if (found) return found[1].trim();
+      if (el.hasAttribute(name)) return (el.getAttribute(name) || "").trim();
+      return null;
     }
 
-    function translateOf(el) {
-      const t = el.getAttribute("transform") || "";
-      const m = t.match(/translate\(\s*([-\d.]+)(?:[\s,]+([-\d.]+))?\s*\)/);
-      if (!m) return { x: 0, y: 0 };
-      return { x: parseFloat(m[1]) || 0, y: parseFloat(m[2]) || 0 };
+    function inheritedPaint(el, name) {
+      for (let node = el; node; node = node.parentElement) {
+        const value = specifiedPaint(node, name);
+        if (value != null && value !== "") return value;
+        if (node.localName === "svg") break;
+      }
+      return null;
     }
 
-    function importSvg(xmlDoc) {
+    function combinedOpacity(el) {
+      let opacity = 1;
+      for (let node = el; node; node = node.parentElement) {
+        const value = specifiedPaint(node, "opacity");
+        if (value != null && value !== "") opacity *= num(value, 1);
+        if (node.localName === "svg") break;
+      }
+      return opacity;
+    }
+
+    function hiddenPaint(el) {
+      for (let node = el; node; node = node.parentElement) {
+        if (specifiedPaint(node, "display") === "none") return true;
+        if (node.localName === "svg") break;
+      }
+      const vis = inheritedPaint(el, "visibility");
+      return vis === "hidden" || vis === "collapse";
+    }
+
+    function multiplyMatrix(a, b) {
+      return [
+        a[0] * b[0] + a[2] * b[1],
+        a[1] * b[0] + a[3] * b[1],
+        a[0] * b[2] + a[2] * b[3],
+        a[1] * b[2] + a[3] * b[3],
+        a[0] * b[4] + a[2] * b[5] + a[4],
+        a[1] * b[4] + a[3] * b[5] + a[5],
+      ];
+    }
+
+    function parseTransform(text) {
+      const parts = [];
+      const re = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/gi;
+      let match;
+      while ((match = re.exec(text || ""))) {
+        const kind = match[1].toLowerCase();
+        const nums = match[2].trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
+        if (kind === "matrix" && nums.length >= 6) parts.push(nums.slice(0, 6));
+        else if (kind === "translate") parts.push([1, 0, 0, 1, nums[0] || 0, nums[1] || 0]);
+        else if (kind === "scale") parts.push([nums[0] || 1, 0, 0, nums.length > 1 ? nums[1] : (nums[0] || 1), 0, 0]);
+        else if (kind === "rotate") {
+          const ang = ((nums[0] || 0) * Math.PI) / 180;
+          const cos = Math.cos(ang);
+          const sin = Math.sin(ang);
+          const cx = nums[1] || 0;
+          const cy = nums[2] || 0;
+          parts.push([cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy]);
+        } else if (kind === "skewx") parts.push([1, 0, Math.tan(((nums[0] || 0) * Math.PI) / 180), 1, 0, 0]);
+        else if (kind === "skewy") parts.push([1, Math.tan(((nums[0] || 0) * Math.PI) / 180), 0, 1, 0, 0]);
+      }
+      let m = [1, 0, 0, 1, 0, 0];
+      for (let i = parts.length - 1; i >= 0; i--) m = multiplyMatrix(parts[i], m);
+      return m;
+    }
+
+    function applyMatrix(m, x, y) {
+      return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+    }
+
+    function applyMatrixVec(m, x, y) {
+      return { x: m[0] * x + m[2] * y, y: m[1] * x + m[3] * y };
+    }
+
+    function matrixOf(el, vx, vy) {
+      const chain = [];
+      for (let node = el; node; node = node.parentElement) {
+        chain.push(node);
+        if (node.localName === "svg") break;
+      }
+      let m = [1, 0, 0, 1, 0, 0];
+      for (let i = chain.length - 1; i >= 0; i--) {
+        const text = chain[i].getAttribute && chain[i].getAttribute("transform");
+        if (text) m = multiplyMatrix(m, parseTransform(text));
+      }
+      if (vx || vy) m = multiplyMatrix([1, 0, 0, 1, -vx, -vy], m);
+      return m;
+    }
+
+    function placedFrame(m, x, y, w, h) {
+      const p0 = applyMatrix(m, x, y);
+      const p1 = applyMatrix(m, x + w, y);
+      const p2 = applyMatrix(m, x, y + h);
+      const p3 = applyMatrix(m, x + w, y + h);
+      const rw = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      const rh = Math.hypot(p2.x - p0.x, p2.y - p0.y);
+      const cross = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
+      const cx = (p0.x + p3.x) / 2;
+      const cy = (p0.y + p3.y) / 2;
+      return {
+        x: cx - rw / 2,
+        y: cy - rh / 2,
+        w: Math.max(0.5, rw),
+        h: Math.max(0.5, rh),
+        rotation: normDeg(Math.atan2(p1.y - p0.y, p1.x - p0.x) * 180 / Math.PI),
+        flipV: cross < 0,
+      };
+    }
+
+    function mapAnchors(anchors, m) {
+      return anchors.map((a) => {
+        const p = applyMatrix(m, a.x, a.y);
+        const inn = applyMatrixVec(m, a.inX, a.inY);
+        const out = applyMatrixVec(m, a.outX, a.outY);
+        return { x: p.x, y: p.y, inX: inn.x, inY: inn.y, outX: out.x, outY: out.y, mode: a.mode };
+      });
+    }
+
+    function axisRect(anchors) {
+      if (!anchors || anchors.length < 4 || anchors.length > 8) return null;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const a of anchors) {
+        if (Math.hypot(a.inX, a.inY) > 0.8 || Math.hypot(a.outX, a.outY) > 0.8) return null;
+        minX = Math.min(minX, a.x);
+        minY = Math.min(minY, a.y);
+        maxX = Math.max(maxX, a.x);
+        maxY = Math.max(maxY, a.y);
+      }
+      const w = maxX - minX;
+      const h = maxY - minY;
+      if (w < 0.5 || h < 0.5) return null;
+      for (const a of anchors) {
+        const onX = Math.abs(a.x - minX) < 0.8 || Math.abs(a.x - maxX) < 0.8;
+        const onY = Math.abs(a.y - minY) < 0.8 || Math.abs(a.y - maxY) < 0.8;
+        if (!onX || !onY) return null;
+      }
+      return { x: minX, y: minY, w: w, h: h };
+    }
+
+    function xmlById(doc, id) {
+      if (doc.getElementById) {
+        const hit = doc.getElementById(id);
+        if (hit) return hit;
+      }
+      const nodes = doc.querySelectorAll("[id]");
+      for (const node of nodes) if (node.getAttribute("id") === id) return node;
+      return null;
+    }
+
+    function clipBox(el) {
+      const raw = el.getAttribute("clip-path") || "";
+      const match = raw.match(/url\(\s*#([^)]+)\)/);
+      if (!match) return null;
+      const cp = xmlById(el.ownerDocument, match[1]);
+      if (!cp) return null;
+      if ((cp.getAttribute("clipPathUnits") || "userSpaceOnUse") === "objectBoundingBox") return null;
+      const rect = cp.querySelector("rect");
+      if (rect) {
+        return {
+          x: num(rect.getAttribute("x"), 0),
+          y: num(rect.getAttribute("y"), 0),
+          w: num(rect.getAttribute("width"), 0),
+          h: num(rect.getAttribute("height"), 0),
+        };
+      }
+      const path = cp.querySelector("path");
+      if (!path) return null;
+      const rings = parsePathD(path.getAttribute("d") || "");
+      if (rings.length !== 1) return null;
+      return axisRect(rings[0].anchors);
+    }
+
+    function cropDataUrl(href, imgX, imgY, imgW, imgH, box) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const sx = ((box.x - imgX) / imgW) * img.naturalWidth;
+          const sy = ((box.y - imgY) / imgH) * img.naturalHeight;
+          const sw = (box.w / imgW) * img.naturalWidth;
+          const sh = (box.h / imgH) * img.naturalHeight;
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(sw));
+          canvas.height = Math.max(1, Math.round(sh));
+          canvas.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/png"));
+        };
+        img.onerror = () => resolve(null);
+        img.src = href;
+      });
+    }
+
+    function readPaint(el) {
+      let fill = inheritedPaint(el, "fill");
+      let stroke = inheritedPaint(el, "stroke");
+      if (fill == null) fill = "#000000";
+      if (stroke == null) stroke = "none";
+      const fillUrl = String(fill).match(/url\(\s*#([^)]+)\)/);
+      if (fillUrl) {
+        const grad = xmlById(el.ownerDocument, fillUrl[1]);
+        const stop = grad && grad.querySelector("stop");
+        fill = stop ? (specifiedPaint(stop, "stop-color") || "#000000") : "#000000";
+      }
+      const strokeUrl = String(stroke).match(/url\(\s*#([^)]+)\)/);
+      if (strokeUrl) stroke = "#000000";
+      const sw = stroke === "none" ? 0 : Math.max(0, num(inheritedPaint(el, "stroke-width") || "1", 1));
+      const opacity = combinedOpacity(el);
+      const fillOpacity = num(inheritedPaint(el, "fill-opacity") || "1", 1);
+      const strokeOpacity = num(inheritedPaint(el, "stroke-opacity") || "1", 1);
+      const rule = inheritedPaint(el, "fill-rule") || "nonzero";
+      return { fill: fill, stroke: stroke, strokeWidth: sw, opacity: opacity, fillOpacity: fillOpacity, strokeOpacity: strokeOpacity, fillRule: rule };
+    }
+
+    function applyFrame(shape, frame) {
+      shape.x = frame.x;
+      shape.y = frame.y;
+      shape.w = frame.w;
+      shape.h = frame.h;
+      shape.rotation = frame.rotation;
+      if (frame.flipV) shape.flipV = true;
+    }
+
+    async function importSvg(xmlDoc) {
       const svg = xmlDoc.querySelector("svg");
       const next = blank();
       if (!svg) return next;
       const vb = (svg.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
+      let vx = 0;
+      let vy = 0;
       if (vb.length === 4 && vb.every(Number.isFinite) && vb[2] > 0 && vb[3] > 0) {
+        vx = vb[0];
+        vy = vb[1];
         next.width = vb[2];
         next.height = vb[3];
       } else {
@@ -3926,102 +4339,147 @@
         if (w) next.width = w;
         if (h) next.height = h;
       }
-      svg.querySelectorAll("rect,ellipse,circle,line,polygon,polyline,path,text,image").forEach((el) => {
-        if (el.closest("defs") || el.querySelector("textPath")) return;
-        const tr = translateOf(el);
-        const fill = paintOf(el, "fill", "#0f8b7d") || "#0f8b7d";
-        const stroke = paintOf(el, "stroke", "#14171c") || "none";
-        const sw = num(paintOf(el, "stroke-width", "2"), 2);
+      const nodes = svg.querySelectorAll("rect,ellipse,circle,line,polygon,polyline,path,text,image");
+      for (const el of nodes) {
+        if (el.closest("defs, clipPath, mask, pattern, symbol, marker, linearGradient, radialGradient")) continue;
+        if (hiddenPaint(el)) continue;
+        const paint = readPaint(el);
+        const filled = paint.fill !== "none" && paint.fillOpacity > 0.001 && paint.opacity > 0.001;
+        const stroked = paint.stroke !== "none" && paint.strokeWidth > 0.001 && paint.strokeOpacity > 0.001 && paint.opacity > 0.001;
         const tag = el.localName;
+        if (tag !== "image" && !filled && !stroked) continue;
+        const m = matrixOf(el, vx, vy);
+        let shapeOpacity = paint.opacity;
+        if (!filled && stroked) shapeOpacity *= paint.strokeOpacity;
+        else shapeOpacity *= paint.fillOpacity;
         const shape = {
           id: "s" + next.nextId++,
-          x: tr.x,
-          y: tr.y,
+          x: 0,
+          y: 0,
           rotation: 0,
-          opacity: num(paintOf(el, "opacity", "1"), 1),
-          fill: fill,
-          stroke: stroke,
-          strokeWidth: sw,
+          opacity: clamp(shapeOpacity, 0, 1),
+          fill: filled ? paint.fill : "none",
+          stroke: stroked ? paint.stroke : "none",
+          strokeWidth: stroked ? paint.strokeWidth : 0,
         };
         if (tag === "rect") {
-          const w = el.getAttribute("width");
-          const h = el.getAttribute("height");
-          if (w === "100%" || h === "100%") {
-            if (fill && fill !== "none") next.background = fill;
-            return;
+          const wAttr = el.getAttribute("width");
+          const hAttr = el.getAttribute("height");
+          if (wAttr === "100%" || hAttr === "100%") {
+            if (filled && shape.opacity > 0.9) next.background = paint.fill;
+            continue;
+          }
+          const w = num(wAttr, 0);
+          const h = num(hAttr, 0);
+          if (w <= 0 || h <= 0) continue;
+          const frame = placedFrame(m, num(el.getAttribute("x"), 0), num(el.getAttribute("y"), 0), w, h);
+          const flat = frame.rotation < 0.5 || frame.rotation > 359.5;
+          if (flat && !frame.flipV && frame.w >= next.width - 1 && frame.h >= next.height - 1 && Math.abs(frame.x) < 1 && Math.abs(frame.y) < 1 && filled && shape.opacity > 0.9) {
+            next.background = paint.fill;
+            continue;
           }
           shape.type = "rect";
-          shape.x += num(el.getAttribute("x"), 0);
-          shape.y += num(el.getAttribute("y"), 0);
-          shape.w = Math.max(1, num(w, 10));
-          shape.h = Math.max(1, num(h, 10));
-          if (shape.w >= next.width - 1 && shape.h >= next.height - 1 && shape.x === 0 && shape.y === 0) {
-            next.background = fill;
-            return;
-          }
+          applyFrame(shape, frame);
         } else if (tag === "ellipse" || tag === "circle") {
-          const rx = tag === "circle" ? num(el.getAttribute("r"), 10) : num(el.getAttribute("rx"), 10);
-          const ry = tag === "circle" ? rx : num(el.getAttribute("ry"), 10);
+          const rx = tag === "circle" ? num(el.getAttribute("r"), 0) : num(el.getAttribute("rx"), 0);
+          const ry = tag === "circle" ? rx : num(el.getAttribute("ry"), 0);
+          if (rx <= 0 || ry <= 0) continue;
+          const cx = num(el.getAttribute("cx"), 0);
+          const cy = num(el.getAttribute("cy"), 0);
           shape.type = "ellipse";
-          shape.w = Math.max(1, rx * 2);
-          shape.h = Math.max(1, ry * 2);
-          shape.x += num(el.getAttribute("cx"), 0) - rx;
-          shape.y += num(el.getAttribute("cy"), 0) - ry;
+          applyFrame(shape, placedFrame(m, cx - rx, cy - ry, rx * 2, ry * 2));
         } else if (tag === "line") {
+          const a = applyMatrix(m, num(el.getAttribute("x1"), 0), num(el.getAttribute("y1"), 0));
+          const b = applyMatrix(m, num(el.getAttribute("x2"), 0), num(el.getAttribute("y2"), 0));
           shape.type = "line";
-          shape.x1 = num(el.getAttribute("x1"), 0);
-          shape.y1 = num(el.getAttribute("y1"), 0);
-          shape.x2 = num(el.getAttribute("x2"), 10);
-          shape.y2 = num(el.getAttribute("y2"), 10);
+          shape.x1 = a.x;
+          shape.y1 = a.y;
+          shape.x2 = b.x;
+          shape.y2 = b.y;
         } else if (tag === "polygon" || tag === "polyline") {
           const nums = (el.getAttribute("points") || "").trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
           const anchors = [];
           for (let i = 0; i + 1 < nums.length; i += 2) anchors.push(makeAnchor(nums[i], nums[i + 1]));
-          if (anchors.length < 2) return;
+          if (anchors.length < 2) continue;
           shape.type = "path";
-          shape.rings = [anchors];
+          shape.rings = [mapAnchors(anchors, m)];
           shape.closed = tag === "polygon";
-          shape.fillRule = "nonzero";
+          shape.fillRule = paint.fillRule === "evenodd" ? "evenodd" : "nonzero";
+          if (!shape.closed) shape.fill = "none";
         } else if (tag === "path") {
           const rings = parsePathD(el.getAttribute("d") || "");
-          if (!rings.length) return;
-          rings.forEach((ring, idx) => {
-            const path = idx === 0 ? shape : { ...shape, id: "s" + next.nextId++ };
+          if (!rings.length) continue;
+          const closed = rings.filter((ring) => ring.closed && ring.anchors.length >= 2);
+          const open = rings.filter((ring) => !ring.closed && ring.anchors.length >= 2);
+          if (closed.length) {
+            shape.type = "path";
+            shape.rings = closed.map((ring) => mapAnchors(ring.anchors, m));
+            shape.closed = true;
+            shape.fillRule = paint.fillRule === "evenodd" ? "evenodd" : "nonzero";
+            next.shapes.push(shape);
+          }
+          open.forEach((ring, idx) => {
+            const path = closed.length || idx ? { ...shape, id: "s" + next.nextId++ } : shape;
             path.type = "path";
-            path.rings = [ring.anchors];
-            path.closed = ring.closed;
-            path.fillRule = (el.getAttribute("fill-rule") || "nonzero") === "evenodd" ? "evenodd" : "nonzero";
-            if (!path.closed) path.fill = "none";
+            path.rings = [mapAnchors(ring.anchors, m)];
+            path.closed = false;
+            path.fill = "none";
+            path.fillRule = "nonzero";
             next.shapes.push(path);
           });
-          return;
+          continue;
         } else if (tag === "text") {
+          const p = applyMatrix(m, num(el.getAttribute("x"), 0), num(el.getAttribute("y"), 0));
           shape.type = "text";
-          shape.x += num(el.getAttribute("x"), 0);
-          shape.y += num(el.getAttribute("y"), 0);
+          shape.x = p.x;
+          shape.y = p.y;
+          shape.rotation = normDeg(Math.atan2(m[1], m[0]) * 180 / Math.PI);
           shape.text = el.textContent || "Text";
-          shape.font = paintOf(el, "font-family", REGULAR).replace(/['"]/g, "") || REGULAR;
-          shape.size = Math.max(1, num(paintOf(el, "font-size", "24"), 24));
+          shape.font = (inheritedPaint(el, "font-family") || REGULAR).replace(/['"]/g, "") || REGULAR;
+          shape.size = Math.max(1, num(inheritedPaint(el, "font-size") || "24", 24) * Math.hypot(m[0], m[1]));
           shape.stroke = "none";
           shape.strokeWidth = 0;
         } else if (tag === "image") {
-          const href = el.getAttribute("href") || el.getAttributeNS("http://www.w3.org/1999/xlink", "href") || "";
-          if (!/^data:image\/(png|jpeg|jpg|webp|gif);base64,/i.test(href)) return;
+          const href = el.getAttribute("href") || el.getAttributeNS("http://www.w3.org/1999/xlink", "href") || el.getAttribute("xlink:href") || "";
+          if (!/^data:image\/(png|jpeg|jpg|webp|gif);base64,/i.test(href)) continue;
+          let ix = num(el.getAttribute("x"), 0);
+          let iy = num(el.getAttribute("y"), 0);
+          let iw = Math.max(1, num(el.getAttribute("width"), 100));
+          let ih = Math.max(1, num(el.getAttribute("height"), 100));
+          let src = href.replace(/\s/g, "");
+          const clip = clipBox(el);
+          if (clip && clip.w > 0.5 && clip.h > 0.5) {
+            const x = Math.max(ix, clip.x);
+            const y = Math.max(iy, clip.y);
+            const r = Math.min(ix + iw, clip.x + clip.w);
+            const b = Math.min(iy + ih, clip.y + clip.h);
+            const covers = x <= ix + 1 && y <= iy + 1 && r >= ix + iw - 1 && b >= iy + ih - 1;
+            if (!covers && r - x > 0.5 && b - y > 0.5) {
+              const cropped = await cropDataUrl(href, ix, iy, iw, ih, { x: x, y: y, w: r - x, h: b - y });
+              if (cropped) {
+                src = cropped;
+                ix = x;
+                iy = y;
+                iw = r - x;
+                ih = b - y;
+              }
+            }
+          }
           shape.type = "image";
-          shape.w = Math.max(1, num(el.getAttribute("width"), 100));
-          shape.h = Math.max(1, num(el.getAttribute("height"), 100));
-          shape.src = href;
+          applyFrame(shape, placedFrame(m, ix, iy, iw, ih));
+          shape.src = src;
           shape.name = "image";
           shape.fill = "none";
           shape.stroke = "none";
           shape.strokeWidth = 0;
-        } else return;
+          shape.opacity = clamp(paint.opacity, 0, 1);
+        } else continue;
         next.shapes.push(shape);
-      });
+      }
       return next;
     }
 
-    function loadText(text, filename) {
+    async function loadText(text, filename) {
       const before = JSON.stringify(doc);
       const trimmed = text.trim();
       let next;
@@ -4031,7 +4489,7 @@
         if (xmlDoc.querySelector("parsererror")) throw new Error("That file is not valid SVG");
         const meta = xmlDoc.querySelector("#folio-doc");
         if (meta && meta.textContent.trim().startsWith("{")) next = JSON.parse(meta.textContent);
-        else next = importSvg(xmlDoc);
+        else next = await importSvg(xmlDoc);
       }
       doc = normalize(next);
       if (filename) doc.name = filename.replace(/\.(svg|json)$/i, "").slice(0, 80);
@@ -4111,7 +4569,7 @@
       publishTool();
       paint();
       syncInspector();
-      setStatus("Placed " + (shape.name || "image") + ". Format options can make one color transparent.");
+      setStatus("Placed " + (shape.name || "image") + ". Format options can trace it or knock out a color.");
     }
 
     function hexToRgb(hex) {
@@ -4172,6 +4630,383 @@
       });
     }
 
+    function tracePalette(data, w, h, count, skipPaper) {
+      const samples = [];
+      const step = Math.max(1, Math.floor(Math.sqrt((w * h) / 5000)));
+      for (let y = 0; y < h; y += step) {
+        for (let x = 0; x < w; x += step) {
+          const i = (y * w + x) * 4;
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const a = data[i + 3];
+          if (a < 24) continue;
+          if (skipPaper && r > 236 && g > 236 && b > 236) continue;
+          samples.push([r, g, b]);
+        }
+      }
+      if (!samples.length) return [];
+      const centers = [samples[(samples.length / 2) | 0].slice()];
+      while (centers.length < count) {
+        let best = null;
+        let bestD = 0;
+        const stride = Math.max(1, Math.floor(samples.length / 800));
+        for (let i = 0; i < samples.length; i += stride) {
+          const s = samples[i];
+          let near = Infinity;
+          for (const c of centers) {
+            const d = (s[0] - c[0]) ** 2 + (s[1] - c[1]) ** 2 + (s[2] - c[2]) ** 2;
+            if (d < near) near = d;
+          }
+          if (near > bestD) {
+            bestD = near;
+            best = s;
+          }
+        }
+        if (!best || bestD < 18 * 18) break;
+        centers.push(best.slice());
+      }
+      const buckets = centers.map(() => [0, 0, 0, 0]);
+      for (let iter = 0; iter < 6; iter++) {
+        for (const bucket of buckets) bucket[0] = bucket[1] = bucket[2] = bucket[3] = 0;
+        for (const s of samples) {
+          let bi = 0;
+          let bd = Infinity;
+          for (let c = 0; c < centers.length; c++) {
+            const d = (s[0] - centers[c][0]) ** 2 + (s[1] - centers[c][1]) ** 2 + (s[2] - centers[c][2]) ** 2;
+            if (d < bd) {
+              bd = d;
+              bi = c;
+            }
+          }
+          buckets[bi][0] += s[0];
+          buckets[bi][1] += s[1];
+          buckets[bi][2] += s[2];
+          buckets[bi][3] += 1;
+        }
+        for (let c = 0; c < centers.length; c++) {
+          if (!buckets[c][3]) continue;
+          centers[c][0] = buckets[c][0] / buckets[c][3];
+          centers[c][1] = buckets[c][1] / buckets[c][3];
+          centers[c][2] = buckets[c][2] / buckets[c][3];
+        }
+      }
+      return centers.map((c) => [Math.round(c[0]), Math.round(c[1]), Math.round(c[2])]);
+    }
+
+    function traceLoops(mask, w, h) {
+      const outs = new Map();
+      function add(x1, y1, x2, y2) {
+        const key = x1 + "," + y1;
+        let list = outs.get(key);
+        if (!list) outs.set(key, list = []);
+        list.push(x2, y2);
+      }
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (!mask[y * w + x]) continue;
+          if (y === 0 || !mask[(y - 1) * w + x]) add(x, y, x + 1, y);
+          if (x + 1 === w || !mask[y * w + x + 1]) add(x + 1, y, x + 1, y + 1);
+          if (y + 1 === h || !mask[(y + 1) * w + x]) add(x + 1, y + 1, x, y + 1);
+          if (x === 0 || !mask[y * w + x - 1]) add(x, y + 1, x, y);
+        }
+      }
+      function take(x, y) {
+        const list = outs.get(x + "," + y);
+        if (!list || !list.length) return null;
+        const y2 = list.pop();
+        const x2 = list.pop();
+        return [x2, y2];
+      }
+      const loops = [];
+      for (const key of Array.from(outs.keys())) {
+        let list = outs.get(key);
+        while (list && list.length) {
+          const start = key.split(",").map(Number);
+          const first = take(start[0], start[1]);
+          if (!first) break;
+          const loop = [start, first];
+          let x = first[0];
+          let y = first[1];
+          let guard = 0;
+          const limit = (w + 1) * (h + 1) * 2;
+          while ((x !== start[0] || y !== start[1]) && guard++ < limit) {
+            const nxt = take(x, y);
+            if (!nxt) break;
+            x = nxt[0];
+            y = nxt[1];
+            loop.push(nxt);
+          }
+          if (x === start[0] && y === start[1] && loop.length >= 4) loops.push(loop);
+        }
+      }
+      return loops;
+    }
+
+    function rdpOpen(pts, eps) {
+      if (pts.length < 3) return pts.slice();
+      let maxD = 0;
+      let idx = 0;
+      const a = pts[0];
+      const b = pts[pts.length - 1];
+      const abx = b[0] - a[0];
+      const aby = b[1] - a[1];
+      const ab = abx * abx + aby * aby;
+      if (ab < 1e-8) return [a];
+      for (let i = 1; i < pts.length - 1; i++) {
+        const t = ((pts[i][0] - a[0]) * abx + (pts[i][1] - a[1]) * aby) / ab;
+        const d = Math.hypot(pts[i][0] - (a[0] + abx * Math.max(0, Math.min(1, t))), pts[i][1] - (a[1] + aby * Math.max(0, Math.min(1, t))));
+        if (d > maxD) {
+          maxD = d;
+          idx = i;
+        }
+      }
+      if (maxD > eps && idx > 0) {
+        const left = rdpOpen(pts.slice(0, idx + 1), eps);
+        const right = rdpOpen(pts.slice(idx), eps);
+        return left.slice(0, -1).concat(right);
+      }
+      return [a, b];
+    }
+
+    function rdpClosed(points, eps) {
+      if (points.length < 5) return points.slice();
+      let far = 1;
+      let best = 0;
+      for (let i = 1; i < points.length; i++) {
+        const d = Math.hypot(points[i][0] - points[0][0], points[i][1] - points[0][1]);
+        if (d > best) {
+          best = d;
+          far = i;
+        }
+      }
+      if (far < 1 || far > points.length - 2) far = Math.max(1, points.length >> 1);
+      const left = rdpOpen(points.slice(0, far + 1), eps);
+      const right = rdpOpen(points.slice(far).concat([points[0]]), eps);
+      const out = left.slice(0, -1).concat(right);
+      if (out.length > 1 && out[out.length - 1][0] === points[0][0] && out[out.length - 1][1] === points[0][1]) out.pop();
+      return out.length >= 3 ? out : points.slice();
+    }
+
+    function loopArea(pts) {
+      let area = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const j = (i + 1) % pts.length;
+        area += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+      }
+      return Math.abs(area) / 2;
+    }
+
+    function loopToAnchors(pts, smooth) {
+      const n = pts.length;
+      if (n < 3) return null;
+      if (!smooth) return pts.map((p) => makeAnchor(p[0], p[1]));
+      const corner = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const a = pts[(i + n - 1) % n];
+        const b = pts[i];
+        const c = pts[(i + 1) % n];
+        const ux = b[0] - a[0];
+        const uy = b[1] - a[1];
+        const vx = c[0] - b[0];
+        const vy = c[1] - b[1];
+        corner[i] = Math.abs(Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)) > 0.9;
+      }
+      const anchors = pts.map((p, i) => {
+        const a = makeAnchor(p[0], p[1]);
+        a.mode = corner[i] ? "corner" : "smooth";
+        return a;
+      });
+      for (let i = 0; i < n; i++) {
+        const i2 = (i + 1) % n;
+        if (corner[i] && corner[i2]) continue;
+        const p0 = pts[(i + n - 1) % n];
+        const p1 = pts[i];
+        const p2 = pts[i2];
+        const p3 = pts[(i + 2) % n];
+        anchors[i].outX = (p2[0] - p0[0]) / 6;
+        anchors[i].outY = (p2[1] - p0[1]) / 6;
+        anchors[i2].inX = (p1[0] - p3[0]) / 6;
+        anchors[i2].inY = (p1[1] - p3[1]) / 6;
+      }
+      return anchors;
+    }
+
+    function traceImage(img, shape, opts) {
+      const sides = [120, 160, 200, 260, 320, 380, 440, 520];
+      const maxSide = sides[clamp(opts.detail, 1, 8) - 1];
+      const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+      const bw = Math.max(2, Math.round((img.naturalWidth || img.width) * scale));
+      const bh = Math.max(2, Math.round((img.naturalHeight || img.height) * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = bw;
+      canvas.height = bh;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, bw, bh);
+      const data = ctx.getImageData(0, 0, bw, bh).data;
+      const palette = tracePalette(data, bw, bh, opts.colors, opts.skipPaper);
+      if (!palette.length) return [];
+      const index = new Uint8Array(bw * bh);
+      index.fill(255);
+      const counts = new Uint32Array(palette.length);
+      for (let p = 0; p < bw * bh; p++) {
+        const o = p * 4;
+        const r = data[o];
+        const g = data[o + 1];
+        const b = data[o + 2];
+        const a = data[o + 3];
+        if (a < 24) continue;
+        if (opts.skipPaper && r > 236 && g > 236 && b > 236) continue;
+        let bi = 0;
+        let bd = Infinity;
+        for (let c = 0; c < palette.length; c++) {
+          const d = (r - palette[c][0]) ** 2 + (g - palette[c][1]) ** 2 + (b - palette[c][2]) ** 2;
+          if (d < bd) {
+            bd = d;
+            bi = c;
+          }
+        }
+        index[p] = bi;
+        counts[bi] += 1;
+      }
+      const sx = (shape.w || bw) / bw;
+      const sy = (shape.h || bh) / bh;
+      const eps = 0.45 + (8 - opts.detail) * 0.28;
+      const minArea = Math.max(6, (bw * bh) / 4000);
+      const order = palette.map((color, i) => ({ i: i, n: counts[i], color: color })).filter((row) => row.n > minArea);
+      order.sort((a, b) => b.n - a.n);
+      const paths = [];
+      const mask = new Uint8Array(bw * bh);
+      for (const row of order) {
+        mask.fill(0);
+        for (let p = 0; p < index.length; p++) if (index[p] === row.i) mask[p] = 1;
+        const rings = [];
+        for (const loop of traceLoops(mask, bw, bh)) {
+          const pts = loop.slice(0, -1);
+          if (loopArea(pts) < minArea) continue;
+          const simple = rdpClosed(pts, eps);
+          const anchors = loopToAnchors(simple, opts.smooth);
+          if (!anchors || anchors.length < 3) continue;
+          for (const a of anchors) {
+            a.x *= sx;
+            a.y *= sy;
+            a.inX *= sx;
+            a.inY *= sy;
+            a.outX *= sx;
+            a.outY *= sy;
+          }
+          rings.push(anchors);
+        }
+        if (!rings.length) continue;
+        const hex = "#" + row.color.map((v) => v.toString(16).padStart(2, "0")).join("");
+        paths.push({
+          id: allocId(),
+          type: "path",
+          x: 0,
+          y: 0,
+          rotation: 0,
+          rings: rings,
+          closed: true,
+          fillRule: "evenodd",
+          fill: hex,
+          stroke: "none",
+          strokeWidth: 0,
+          opacity: 1,
+        });
+      }
+      return paths;
+    }
+
+    function traceFrame(w, h, paths) {
+      let minX = 0;
+      let minY = 0;
+      let maxX = w;
+      let maxY = h;
+      for (const path of paths) {
+        const b = localBBox(path);
+        minX = Math.min(minX, b.minX);
+        minY = Math.min(minY, b.minY);
+        maxX = Math.max(maxX, b.maxX);
+        maxY = Math.max(maxY, b.maxY);
+      }
+      const cx = w / 2;
+      const cy = h / 2;
+      const halfW = Math.max(cx - minX, maxX - cx, 1);
+      const halfH = Math.max(cy - minY, maxY - cy, 1);
+      return {
+        id: allocId(),
+        type: "rect",
+        x: cx - halfW,
+        y: cy - halfH,
+        w: halfW * 2,
+        h: halfH * 2,
+        rotation: 0,
+        opacity: 0,
+        fill: "none",
+        stroke: "none",
+        strokeWidth: 0,
+      };
+    }
+
+    function traceSelected() {
+      const shape = selected.map(byId).filter((s) => s && s.type === "image" && s.src)[0];
+      if (!shape) {
+        setStatus("Select an image first");
+        return;
+      }
+      if (busy) return;
+      const colors = clamp(Number($("trace-colors") && $("trace-colors").value) || 8, 2, 12);
+      const detail = clamp(Number($("trace-detail") && $("trace-detail").value) || 4, 1, 8);
+      const smooth = !$("trace-smooth") || $("trace-smooth").value !== "0";
+      const skipPaper = !$("trace-paper") || $("trace-paper").value !== "0";
+      busy = true;
+      setStatus("Tracing…");
+      const before = JSON.stringify(doc);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const paths = traceImage(img, shape, { colors: colors, detail: detail, smooth: smooth, skipPaper: skipPaper });
+          if (!paths.length) {
+            setStatus("Nothing to trace. Try Keep white, or more colors.");
+            return;
+          }
+          const group = {
+            id: allocId(),
+            type: "group",
+            x: shape.x || 0,
+            y: shape.y || 0,
+            rotation: shape.rotation || 0,
+            opacity: shape.opacity == null ? 1 : shape.opacity,
+            fill: "none",
+            stroke: "none",
+            strokeWidth: 0,
+            name: "Trace",
+            children: [traceFrame(shape.w || 0, shape.h || 0, paths)].concat(paths),
+          };
+          if (shape.flipH) group.flipH = true;
+          if (shape.flipV) group.flipV = true;
+          const home = containerOf(shape.id) || doc.shapes;
+          const at = home.findIndex((s) => s.id === shape.id);
+          home.splice(at + 1, 0, group);
+          selected = [group.id];
+          nodeSel = null;
+          pushHist(before);
+          paint();
+          syncInspector();
+          setStatus("Traced " + paths.length + (paths.length === 1 ? " color" : " colors") + ". The picture is still underneath.");
+        } catch (err) {
+          setStatus(err && err.message ? err.message : "Trace failed");
+        } finally {
+          busy = false;
+        }
+      };
+      img.onerror = () => {
+        busy = false;
+        setStatus("Could not read that image");
+      };
+      img.src = shape.src;
+    }
+
     async function knockSelected() {
       const shapes = selected.map(byId).filter((s) => s && s.type === "image" && s.src);
       if (!shapes.length) {
@@ -4230,13 +5065,52 @@
           const file = await handle.getFile();
           if (/\.json$/i.test(file.name)) jsonHandle = handle;
           else svgHandle = handle;
-          loadText(await file.text(), file.name);
+          await loadText(await file.text(), file.name);
           return;
         }
       } catch (err) {
         if (err && err.name === "AbortError") return;
       }
       $("file-open").click();
+    }
+
+    function inOpenGroup(id) {
+      if (!editingGroup) return false;
+      if (id === editingGroup) return true;
+      const loc = locate(id);
+      return !!(loc && loc.ancestors.some((a) => a.id === editingGroup));
+    }
+
+    function enterGroup(id) {
+      const s = byId(id);
+      if (!s || s.type !== "group") return;
+      editingGroup = id;
+      selected = [];
+      nodeSel = null;
+      if (tool !== "select") setTool("select");
+      else {
+        paint();
+        syncInspector();
+      }
+      setStatus("Editing group");
+    }
+
+    function exitGroup() {
+      const id = editingGroup;
+      const loc = id ? locate(id) : null;
+      const parent = loc && loc.ancestors.length ? loc.ancestors[loc.ancestors.length - 1] : null;
+      if (parent && parent.type === "group") {
+        editingGroup = parent.id;
+        selected = id && byId(id) ? [id] : [];
+        setStatus("Editing group");
+      } else {
+        editingGroup = null;
+        selected = id && byId(id) ? [id] : [];
+        setStatus("Group");
+      }
+      nodeSel = null;
+      paint();
+      syncInspector();
     }
 
     function onPointerDown(e) {
@@ -4308,6 +5182,10 @@
       }
       if (e.detail === 2 && tool === "select" && hit.shape) {
         const s = byId(hit.shape);
+        if (s && s.type === "group") {
+          enterGroup(s.id);
+          return;
+        }
         if (s && s.type === "path") {
           selected = [s.id];
           setTool("nodes");
@@ -4326,7 +5204,7 @@
           const s = byId(hit.shape);
           if (s && s.type === "path") {
             const before = JSON.stringify(doc);
-            if (insertOnPath(s, worldToLocal(s, world))) {
+            if (insertOnPath(s, fromPage(s, world))) {
               selected = [s.id];
               pushHist(before);
               paint();
@@ -4348,6 +5226,11 @@
           return;
         }
       }
+      if (tool === "select" && hit.handle && hit.handle.handle === "group") {
+        if (editingGroup === hit.handle.shape && e.detail < 2) exitGroup();
+        else enterGroup(hit.handle.shape);
+        return;
+      }
       if (tool === "select" && hit.handle) {
         const s = byId(hit.handle.shape);
         if (!s) return;
@@ -4367,7 +5250,7 @@
           stage.setPointerCapture(e.pointerId);
           return;
         }
-        const center = localToWorld(s, localCenter(s));
+        const center = toPage(s, localCenter(s));
         drag = {
           mode: hit.handle.handle === "rotate" ? "rotate" : "scale",
           pointerId: e.pointerId,
@@ -4381,6 +5264,13 @@
         return;
       }
       const shapeId = hit.shape;
+      if (shapeId && editingGroup && !inOpenGroup(shapeId)) editingGroup = null;
+      if (!shapeId && editingGroup && (tool === "select" || tool === "nodes")) {
+        const g = byId(editingGroup);
+        const b = g ? pageBox(g) : null;
+        const inside = b && world.x >= b.minX && world.x <= b.maxX && world.y >= b.minY && world.y <= b.maxY;
+        if (!inside) editingGroup = null;
+      }
       if (shapeId && (tool === "select" || tool === "nodes")) {
         if (e.shiftKey) {
           const i = selected.indexOf(shapeId);
@@ -4522,8 +5412,9 @@
           if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
           else dx = 0;
         }
+        const nested = drag.origins.some((origin) => chainOf(origin.id).length);
         const o = drag.origins[0];
-        if (o && doc.snap && doc.grid) {
+        if (o && doc.snap && doc.grid && !nested) {
           dx = snapN(o.x + dx) - o.x;
           dy = snapN(o.y + dy) - o.y;
           if (e.shiftKey) {
@@ -4534,8 +5425,9 @@
         for (const origin of drag.origins) {
           const s = byId(origin.id);
           if (!s || s.type === "textPath") continue;
-          s.x = origin.x + dx;
-          s.y = origin.y + dy;
+          const d = parentDelta(s, dx, dy);
+          s.x = origin.x + d.x;
+          s.y = origin.y + d.y;
         }
         requestPaint();
         return;
@@ -4551,11 +5443,11 @@
         const a = s && s.rings[drag.node.ring] && s.rings[drag.node.ring][drag.node.index];
         if (!a) return;
         let p = e.shiftKey ? world : snapPt(world);
-        const local = worldToLocal(s, p);
+        const local = fromPage(s, p);
         if (drag.node.kind === "anchor") {
-          const target = e.shiftKey ? lock45(worldToLocal(s, drag.startWorld || localToWorld(s, a)), local) : local;
-          if (!drag.startWorld) drag.startWorld = localToWorld(s, { x: a.x, y: a.y });
-          const from = worldToLocal(s, drag.startWorld);
+          const target = e.shiftKey ? lock45(fromPage(s, drag.startWorld || toPage(s, a)), local) : local;
+          if (!drag.startWorld) drag.startWorld = toPage(s, { x: a.x, y: a.y });
+          const from = fromPage(s, drag.startWorld);
           const locked = e.shiftKey ? lock45(from, local) : local;
           a.x = locked.x;
           a.y = locked.y;
@@ -4588,7 +5480,7 @@
         const snap = drag.snapshot;
         restore(live, snap);
         if (drag.mode === "rotate") {
-          const c = localToWorld(snap, localCenter(snap));
+          const c = toPage(snap, localCenter(snap));
           const ang = Math.atan2(world.y - c.y, world.x - c.x);
           let deg = snap.rotation + ((ang - drag.startAngle) * 180) / Math.PI;
           if (e.shiftKey) deg = Math.round(deg / 45) * 45;
@@ -4725,6 +5617,10 @@
           setStatus("Pen cancelled");
           return;
         }
+        if (editingGroup) {
+          exitGroup();
+          return;
+        }
         selected = [];
         nodeSel = null;
         paint();
@@ -4813,6 +5709,12 @@
         syncInspector();
         return;
       }
+      if (meta && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        if (e.key === "ArrowUp") reorder(e.shiftKey ? "front" : "forward");
+        else reorder(e.shiftKey ? "back" : "backward");
+        return;
+      }
       const step = e.shiftKey ? 10 : 1;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
@@ -4880,8 +5782,8 @@
     function onInspector(e) {
       const t = e.target;
       if (!t.id) return;
-      if (t.id === "img-tol") {
-        const lab = $("img-tol-val");
+      if (t.id === "img-tol" || t.id === "trace-colors" || t.id === "trace-detail") {
+        const lab = $(t.id + "-val");
         if (lab) lab.textContent = t.value;
         return;
       }
@@ -5064,7 +5966,7 @@
         const a = s.rings[nodeSel.ring] && s.rings[nodeSel.ring][nodeSel.index];
         if (!a) return;
         noteEdit();
-        const local = worldToLocal(s, { x: readLen("node-x", 0), y: readLen("node-y", 0) });
+        const local = fromPage(s, { x: readLen("node-x", 0), y: readLen("node-y", 0) });
         a.x = local.x;
         a.y = local.y;
         dirtySave();
@@ -5178,18 +6080,24 @@
         ["Hand", "H"],
       ]],
       ["With objects", [
+        ["Copy", "Ctrl C"],
+        ["Cut", "Ctrl X"],
+        ["Paste", "Ctrl V"],
         ["Duplicate", "Ctrl D"],
         ["Group", "Ctrl G"],
         ["Ungroup", "Ctrl Shift G"],
         ["Delete", "Del"],
         ["Nudge 1 px", "Arrows"],
         ["Nudge 10 px", "Shift Arrows"],
-        ["Bring forward", "]"],
-        ["Send backward", "["],
-        ["Bring to front", "Ctrl ]"],
-        ["Send to back", "Ctrl ["],
+        ["Bring forward", "Ctrl Up"],
+        ["Send backward", "Ctrl Down"],
+        ["Bring to front", "Ctrl Shift Up"],
+        ["Send to back", "Ctrl Shift Down"],
         ["Next shape", "Tab"],
         ["Previous shape", "Shift Tab"],
+        ["Edit a group", "Double-click"],
+        ["Leave a group", "Esc"],
+        ["Trace an image", "Image panel"],
         ["Deselect", "Esc"],
       ]],
       ["Drawing", [
@@ -5212,7 +6120,6 @@
         ["Redo", "Ctrl Shift Z"],
         ["Redo again", "Ctrl Y"],
         ["Select all", "Ctrl A"],
-        ["Paste an image", "Ctrl V"],
         ["Keyboard shortcuts", "Ctrl /"],
       ]],
     ];
@@ -5447,6 +6354,7 @@
         setStatus("Click the color on the image");
       }
       else if (id === "btn-knock") knockSelected();
+      else if (id === "btn-trace") traceSelected();
       else if (id === "btn-on-path") bindText();
       else if (id === "btn-add-node") addNode();
       else if (id === "node-corner" || id === "node-smooth") {
@@ -5486,11 +6394,50 @@
         setStatus(err && err.message ? err.message : "Could not import that image");
       }
     });
+    window.addEventListener("copy", (e) => {
+      const el = e.target;
+      const typing = !!(el && typeof el.closest === "function" && el.closest("input, textarea, select"));
+      if (typing) return;
+      const shapes = copySelected();
+      if (!shapes) return;
+      e.preventDefault();
+      e.clipboardData.setData("application/x-gdrew", JSON.stringify(shapes));
+      e.clipboardData.setData("text/plain", "");
+      setStatus(shapes.length === 1 ? "Copied" : "Copied " + shapes.length);
+    }, opt);
+    window.addEventListener("cut", (e) => {
+      const el = e.target;
+      const typing = !!(el && typeof el.closest === "function" && el.closest("input, textarea, select"));
+      if (typing) return;
+      const shapes = copySelected();
+      if (!shapes) return;
+      e.preventDefault();
+      e.clipboardData.setData("application/x-gdrew", JSON.stringify(shapes));
+      e.clipboardData.setData("text/plain", "");
+      const before = JSON.stringify(doc);
+      removeIds(shapes.map((s) => s.id));
+      pushHist(before);
+      paint();
+      syncInspector();
+      setStatus(shapes.length === 1 ? "Cut" : "Cut " + shapes.length);
+    }, opt);
     window.addEventListener("paste", async (e) => {
       const el = e.target;
       const typing = !!(el && typeof el.closest === "function" && el.closest("input, textarea, select"));
       if (typing || !e.clipboardData) return;
       const items = e.clipboardData.items ? Array.from(e.clipboardData.items) : [];
+      let raw = "";
+      try { raw = e.clipboardData.getData("application/x-gdrew"); } catch (err) { raw = ""; }
+      if (raw) {
+        e.preventDefault();
+        try { pasteShapes(JSON.parse(raw)); } catch (err) { setStatus("Could not paste"); }
+        return;
+      }
+      if (shapeClip && shapeClip.shapes && shapeClip.shapes.length && !items.some((it) => it.kind === "file")) {
+        e.preventDefault();
+        pasteShapes(shapeClip.shapes);
+        return;
+      }
       const item = items.find((it) => it.kind === "file" && /^image\/(png|jpeg|webp|gif)$/i.test(it.type));
       const file = item ? item.getAsFile() : null;
       if (!file) return;
@@ -5516,6 +6463,14 @@
       }
     }, opt);
     stage.addEventListener("pointerdown", onPointerDown, opt);
+    stage.addEventListener("dblclick", (e) => {
+      if (tool !== "select") return;
+      const el = document.elementFromPoint(e.clientX, e.clientY) || e.target;
+      const hit = identify(el);
+      const s = hit.shape ? byId(hit.shape) : null;
+      if (!s || s.type !== "group") return;
+      enterGroup(s.id);
+    }, opt);
     if (window.ResizeObserver) new ResizeObserver(() => requestRulers()).observe(svg);
     stage.addEventListener("pointermove", (e) => {
       rulerCursor = clientToWorld(e.clientX, e.clientY);
